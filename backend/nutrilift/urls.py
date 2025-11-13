@@ -4,6 +4,7 @@ from django.http import JsonResponse
 from django.urls import path
 from accounts.decorators import require_roles
 from accounts.models import Role
+from django.urls import path, include
 
 def health(_):
     return JsonResponse({"ok": True})
@@ -22,4 +23,7 @@ urlpatterns = [
     path("health/", health),
     path(f"{settings.ADMIN_URL}/", admin.site.urls),
     path("whoami/", whoami),
+    path("screening/", include("screening.urls")),
 ]
+
+

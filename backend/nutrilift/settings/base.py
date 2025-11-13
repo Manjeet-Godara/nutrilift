@@ -18,6 +18,9 @@ INSTALLED_APPS = [
     # project apps
     "accounts",
     "orgs",
+    "roster",
+    "screening",
+    "audit",
 ]
 
 MIDDLEWARE = [
