@@ -23,6 +23,7 @@ INSTALLED_APPS = [
     "screening",
     "audit",
     "messaging",
+    "assist",
 ]
 
 MIDDLEWARE = [

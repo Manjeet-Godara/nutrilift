@@ -25,6 +25,7 @@ urlpatterns = [
     path("whoami/", whoami),
     path("screening/", include("screening.urls")),
     path("", include("messaging.urls")),
+    path("", include("assist.urls")),
 ]
 
 
