@@ -1,0 +1,106 @@
+import os
+from typing import Dict, Tuple
+from django.utils import timezone
+from accounts.models import Organization
+from roster.models import Guardian
+from screening.models import Screening
+from .models import MessageLog
+from .i18n import choose_language, flags_to_text, edu_video_url, assist_apply_url
+
+# provider picker
+def _provider():
+    prov = (os.getenv("WHATSAPP_PROVIDER") or "mock").lower()
+    if prov == "meta":
+        from .providers.meta_cloud import MetaCloudProvider
+        return MetaCloudProvider()
+    else:
+        from .providers.mock import MockProvider
+        return MockProvider()
+
+# Map our internal codes to WABA template names
+TEMPLATE_NAME = {
+    "RED_EDU_V1": "nutrilift_redflag_edu_v1",
+    "RED_ASSIST_V1": "nutrilift_redflag_assist_v1",
+}
+
+# Map language shortcut to WABA language codes
+LANG_CODE = {
+    "en": "en",    # you may use en_US if that is how the template was approved
+    "hi": "hi",
+    "local": "en", # fallback; you can add actual local (e.g., "mr") once approved
+}
+
+def _guardian_and_phone(screening: Screening):
+    g = screening.student.primary_guardian
+    return g, (g.phone_e164 if g else "")
+
+def send_redflag_education(screening: Screening) -> MessageLog:
+    org: Organization = screening.organization
+    guardian, phone = _guardian_and_phone(screening)
+    lang = choose_language(getattr(guardian,"preferred_language",None), getattr(org,"locale",None))
+    flags_txt = flags_to_text(screening.red_flags, lang)
+    video = edu_video_url(lang)
+
+    # Components must match your approved WABA template placeholders
+    components = {
+        "body": [
+            screening.student.full_name,     # {{1}} child name
+            flags_txt,                       # {{2}} flags text
+            video                            # {{3}} video link
+        ],
+        "buttons": [video]                   # Button 0: "Watch video" -> {{1}} placeholder in WABA URL button
+    }
+
+    log = MessageLog.objects.create(
+        organization=org,
+        to_phone_e164=phone,
+        template_code="RED_EDU_V1",
+        language=lang,
+        payload={"screening_id": screening.id, "flags": screening.red_flags, "video": video},
+        related_screening=screening,
+        status=MessageLog.Status.QUEUED
+    )
+
+    prov = _provider()
+    msg_id, pstatus = prov.send_template(phone, TEMPLATE_NAME["RED_EDU_V1"], LANG_CODE[lang], components)
+    log.provider_msg_id = msg_id
+    log.status = MessageLog.Status.SENT if pstatus.lower() == "sent" else MessageLog.Status.QUEUED
+    log.sent_at = timezone.now()
+    log.save(update_fields=["provider_msg_id","status","sent_at","updated_at"])
+    return log
+
+def send_redflag_assistance(screening: Screening) -> MessageLog:
+    org: Organization = screening.organization
+    guardian, phone = _guardian_and_phone(screening)
+    lang = choose_language(getattr(guardian,"preferred_language",None), getattr(org,"locale",None))
+    flags_txt = flags_to_text(screening.red_flags, lang)
+    video = edu_video_url(lang)
+    apply_url = assist_apply_url(screening.student_id, screening.id, lang)
+
+    components = {
+        "body": [
+            screening.student.full_name,  # {{1}}
+            flags_txt,                    # {{2}}
+            video,                        # {{3}}
+            apply_url                     # {{4}}
+        ],
+        "buttons": [video, apply_url]     # Button 0 -> video, Button 1 -> apply
+    }
+
+    log = MessageLog.objects.create(
+        organization=org,
+        to_phone_e164=phone,
+        template_code="RED_ASSIST_V1",
+        language=lang,
+        payload={"screening_id": screening.id, "flags": screening.red_flags, "video": video, "apply_url": apply_url},
+        related_screening=screening,
+        status=MessageLog.Status.QUEUED
+    )
+
+    prov = _provider()
+    msg_id, pstatus = prov.send_template(phone, TEMPLATE_NAME["RED_ASSIST_V1"], LANG_CODE[lang], components)
+    log.provider_msg_id = msg_id
+    log.status = MessageLog.Status.SENT if pstatus.lower() == "sent" else MessageLog.Status.QUEUED
+    log.sent_at = timezone.now()
+    log.save(update_fields=["provider_msg_id","status","sent_at","updated_at"])
+    return log

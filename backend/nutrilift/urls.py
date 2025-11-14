@@ -24,6 +24,7 @@ urlpatterns = [
     path(f"{settings.ADMIN_URL}/", admin.site.urls),
     path("whoami/", whoami),
     path("screening/", include("screening.urls")),
+    path("", include("messaging.urls")),
 ]
 
 

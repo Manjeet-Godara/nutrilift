@@ -12,6 +12,13 @@ from .forms import ScreeningForm, MCQ_FIELDS
 from .models import Screening
 from .services import compute_risk
 from audit.utils import audit_log
+from django.contrib import messages
+from django.shortcuts import get_object_or_404, redirect
+from accounts.decorators import require_roles
+from accounts.models import Role
+from messaging.services import send_redflag_education, send_redflag_assistance
+from roster.models import Guardian
+from .models import Screening 
 
 def _org_required(request):
     return getattr(request, "org", None) is not None
@@ -139,3 +146,28 @@ def screening_result(request, screening_id):
     }
 
     return render(request, "screening/screening_result.html", {"s": s, "links": links})
+
+
+@require_roles(Role.TEACHER, Role.ORG_ADMIN, allow_superuser=True)
+def send_education(request, screening_id):
+    s = get_object_or_404(Screening, pk=screening_id, organization=request.org)
+    # basic guards
+    if not s.student.primary_guardian or not s.student.primary_guardian.phone_e164:
+        messages.error(request, "Parent WhatsApp number missing.")
+        return redirect("screening_result", screening_id=s.id)
+    log = send_redflag_education(s)
+    messages.success(request, f"Education message queued → status {log.status}.")
+    return redirect("screening_result", screening_id=s.id)
+
+@require_roles(Role.TEACHER, Role.ORG_ADMIN, allow_superuser=True)
+def send_assistance(request, screening_id):
+    s = get_object_or_404(Screening, pk=screening_id, organization=request.org)
+    if not s.is_low_income_at_screen and not s.student.is_low_income:
+        messages.error(request, "Assistance flow is for low-income students only.")
+        return redirect("screening_result", screening_id=s.id)
+    if not s.student.primary_guardian or not s.student.primary_guardian.phone_e164:
+        messages.error(request, "Parent WhatsApp number missing.")
+        return redirect("screening_result", screening_id=s.id)
+    log = send_redflag_assistance(s)
+    messages.success(request, f"Assistance message queued → status {log.status}.")
+    return redirect("screening_result", screening_id=s.id)
