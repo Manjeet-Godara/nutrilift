@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "messaging",
     "assist",
     "program.apps.ProgramConfig",  # <- make sure it's this dotted path
+    "reporting",   # NEW (Sprint 8)
 ]
 
 MIDDLEWARE = [
@@ -106,3 +107,16 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=2, minute=15),
     },
 }
+
+
+
+CELERY_BEAT_SCHEDULE.update({
+    "reporting-rollup-nightly": {
+        "task": "reporting.tasks.build_daily_rollups",
+        "schedule": crontab(hour=1, minute=30),  # 01:30 every day
+    },
+    "reporting-send-due-reports-daily": {
+        "task": "reporting.tasks.send_due_school_reports",
+        "schedule": crontab(hour=3, minute=5),   # 03:05 every day
+    },
+})
