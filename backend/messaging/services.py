@@ -9,13 +9,16 @@ from .i18n import choose_language, flags_to_text, edu_video_url, assist_apply_ur
 import hashlib
 from django.db import transaction
 from .ratelimit import check_global_per_min, check_per_phone_daily, RateLimitExceeded
-
+import uuid
 # provider picker
 def _provider():
     prov = (os.getenv("WHATSAPP_PROVIDER") or "mock").lower()
     if prov == "meta":
         from .providers.meta_cloud import MetaCloudProvider
         return MetaCloudProvider()
+    elif prov == "aisensy":
+        from .providers.aisensy import AiSensyProvider
+        return AiSensyProvider()
     else:
         from .providers.mock import MockProvider
         return MockProvider()
@@ -37,9 +40,15 @@ def _guardian_and_phone(screening: Screening):
     g = screening.student.primary_guardian
     return g, (g.phone_e164 if g else "")
 
+# def _make_idem_key(*parts):
+#     raw = "|".join(str(p) for p in parts)
+#     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:60]
+
 def _make_idem_key(*parts):
     raw = "|".join(str(p) for p in parts)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:60]
+    # Deterministic 36-char key that fits CharField(max_length=36)
+    # UUIDv5 is stable for the same input and namespace
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
 @transaction.atomic
 def send_redflag_education(screening):
