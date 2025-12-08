@@ -26,9 +26,45 @@ from django.shortcuts import render
 from .forms import AddStudentForm  # add AddStudentForm
 import json  
 from django.core.exceptions import ValidationError
+from messaging.ratelimit import RateLimitExceeded
+from messaging.models import MessageLog
 
 def _org_required(request):
     return getattr(request, "org", None) is not None
+
+def _auto_send_for_screening(request, s: Screening):
+    """
+    Decide and send the correct WhatsApp message automatically
+    after a screening is created. Uses the guardian's WhatsApp
+    number on the Student record.
+    """
+    guardian = getattr(s.student, "primary_guardian", None)
+    phone = getattr(guardian, "phone_e164", "") if guardian else ""
+    if not phone:
+        messages.warning(request, "No parent WhatsApp on file — message not sent.")
+        return None
+
+    # Consider either the snapshot on the screening OR the student flag
+    #low_income = bool(s.is_low_income_at_screen) or bool(getattr(s.student, "is_low_income", False))
+    low_income = bool(s.is_low_income_at_screen)
+    try:
+        if s.risk_level == Screening.RiskLevel.RED and low_income:
+            log = send_redflag_assistance(s)
+            messages.success(request, "Assistance invitation queued for the parent.")
+            audit_log(request.user, request.org, "AUTO_SEND_ASSISTANCE",
+                      target=s, payload={"message_id": log.id}, request=request)
+        else:
+            log = send_redflag_education(s)
+            messages.success(request, "Education message queued for the parent.")
+            audit_log(request.user, request.org, "AUTO_SEND_EDUCATION",
+                      target=s, payload={"message_id": log.id}, request=request)
+        return log
+    except RateLimitExceeded as e:
+        messages.warning(request, f"Message not sent due to rate limits: {e}")
+        return None
+    except Exception as e:
+        messages.error(request, f"Auto-send failed: {e}")
+        return None
 
 @require_roles(Role.TEACHER, Role.ORG_ADMIN, allow_superuser=True)
 def teacher_portal(request):
@@ -101,13 +137,16 @@ def screening_create(request, student_id):
                     organization=org, phone_e164=phone,
                     defaults={"full_name": "Parent", "whatsapp_opt_in": True}
                 )
-                if not student.primary_guardian_id:
+                # Rebind if different, so messages go to the phone the teacher just entered
+                if student.primary_guardian_id != guardian.id:
                     student.primary_guardian = guardian
                     student.save(update_fields=["primary_guardian"])
+            
+            _auto_send_for_screening(request, s)
 
             audit_log(request.user, org, "SCREENING_CREATED", target=s, payload={"risk": s.risk_level})
 
-            return redirect(reverse("screening_result", args=[s.id]))
+            return redirect(reverse("screening_result", args=[s.id])) 
         else:
             # ------- re-render with field errors -------
             mcq_fields = [form[field_key] for field_key, _ in MCQ_FIELDS]
@@ -133,26 +172,11 @@ def screening_result(request, screening_id):
     org = request.org
     s = get_object_or_404(Screening, pk=screening_id, organization=org)
 
-    # WhatsApp pre-filled message links (opened on teacher device). Real template sending in Sprint 2.
-    parent_phone = s.student.primary_guardian.phone_e164 if s.student.primary_guardian else ""
-    report = f"Screening result for {s.student.full_name}: {s.risk_level}. Flags: {', '.join(s.red_flags) or 'none'}."
-    education_msg = (report + " Please watch this short video on nutrition and consult your pediatrician."
-                     " Video: https://example.org/nutrition-video")
-    assistance_msg = (report + " Your child may be eligible for supplementation support. "
-                      "Learn more and apply here: https://example.org/support-apply")
+    # Show the latest message (if any) associated to this screening
+    last_message = MessageLog.objects.filter(related_screening=s).order_by("-created_at").first()
 
-    def wa_link(text):
-        if not parent_phone:
-            return ""
-        from urllib.parse import quote_plus
-        return f"https://wa.me/{parent_phone.replace('+','')}/?text={quote_plus(text)}"
+    return render(request, "screening/screening_result.html", {"s": s, "last_message": last_message})
 
-    links = {
-        "education_link": wa_link(education_msg),
-        "assistance_link": wa_link(assistance_msg) if s.is_low_income_at_screen else "",
-    }
-
-    return render(request, "screening/screening_result.html", {"s": s, "links": links})
 
 
 @require_roles(Role.TEACHER, Role.ORG_ADMIN, allow_superuser=True)
@@ -287,6 +311,8 @@ def teacher_add_student(request):
                     s.risk_level = rr.level
                     s.red_flags = rr.red_flags
                     s.save()
+
+                _auto_send_for_screening(request, s)
 
                 messages.success(request, f"Student “{student.full_name}” created and screening completed.")
                 audit_log(
