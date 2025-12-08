@@ -12,7 +12,7 @@ from .models import Application
 from .forms import ParentConsentForm
 from datetime import datetime, date
 import calendar
-
+import re
 
 # ---------- Public parent application (consent) ----------
 def assist_apply(request):

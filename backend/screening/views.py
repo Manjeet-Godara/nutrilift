@@ -279,7 +279,7 @@ def teacher_add_student(request):
                         organization=org,
                         classroom=classroom,
                         first_name=student_form.cleaned_data["first_name"].strip(),
-                        last_name=(student_form.cleaned_data.get("last_name") or "").strip(),
+                        last_name="",
                         gender=screening_form.cleaned_data["gender"],
                         dob=student_form.cleaned_data.get("dob"),
                         is_low_income=student_form.cleaned_data.get("is_low_income", False),
@@ -298,7 +298,7 @@ def teacher_add_student(request):
                         age_years=screening_form.cleaned_data["age_years"],
                         gender=screening_form.cleaned_data["gender"],
                         answers=screening_form.cleaned_data["answers"],
-                        is_low_income_at_screen=screening_form.cleaned_data["is_low_income_at_screen"],
+                        is_low_income_at_screen=student_form.cleaned_data.get("is_low_income", False),
                     )
 
                     rr = compute_risk(
