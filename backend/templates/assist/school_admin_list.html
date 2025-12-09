@@ -35,15 +35,41 @@
       </form>
     
       <div class="stats">
-        <div class="stat"><strong>Total students</strong><div>{{ summary.total_students }}</div></div>
-        <div class="stat"><strong>Total screened</strong><div>{{ summary.total_screened }}</div></div>
-        <div class="stat"><strong>Total red‑flagged</strong><div>{{ summary.total_redflag }}</div></div>
-        <div class="stat"><strong>Applications pending</strong><div>{{ summary.applications_pending }}</div></div>
-        <div class="stat"><strong>Applications approved</strong><div>{{ summary.applications_approved }}</div></div>
-        <div class="stat"><strong>Total boys screened</strong><div>{{ summary.boys_screened }}</div></div>
-        <div class="stat"><strong>Total boys red‑flagged</strong><div>{{ summary.boys_redflag }}</div></div>
-        <div class="stat"><strong>Total girls screened</strong><div>{{ summary.girls_screened }}</div></div>
-        <div class="stat"><strong>Total girls red‑flagged</strong><div>{{ summary.girls_redflag }}</div></div>
+        <a class="stat" href="{% url 'assist:metric_students' 'all' %}">
+          <strong>Total students</strong><div>{{ summary.total_students }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'screened' %}?period={{ period }}">
+          <strong>Total screened</strong><div>{{ summary.total_screened }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'redflag' %}?period={{ period }}">
+          <strong>Total red‑flagged</strong><div>{{ summary.total_redflag }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_applications' 'pending' %}?period={{ period }}">
+          <strong>Applications pending</strong><div>{{ summary.applications_pending }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_applications' 'approved' %}?period={{ period }}">
+          <strong>Applications approved</strong><div>{{ summary.applications_approved }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'boys_screened' %}?period={{ period }}">
+          <strong>Total boys screened</strong><div>{{ summary.boys_screened }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'boys_redflag' %}?period={{ period }}">
+          <strong>Total boys red‑flagged</strong><div>{{ summary.boys_redflag }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'girls_screened' %}?period={{ period }}">
+          <strong>Total girls screened</strong><div>{{ summary.girls_screened }}</div>
+        </a>
+      
+        <a class="stat" href="{% url 'assist:metric_students' 'girls_redflag' %}?period={{ period }}">
+          <strong>Total girls red‑flagged</strong><div>{{ summary.girls_redflag }}</div>
+        </a>
       </div>
       <p style="color:#6b7280;margin:.25rem 0 1rem 0">Filter applies to all tiles above except “Total students”.</p>
 

@@ -13,6 +13,176 @@ from .forms import ParentConsentForm
 from datetime import datetime, date
 import calendar
 import re
+from .models import Application, BatchItem
+from django.core.paginator import Paginator
+from django.db.models import Exists, OuterRef, Subquery, DateTimeField
+# --- NEW DETAIL VIEWS FOR METRICS ---
+
+def _age_years(dob):
+    if not dob:
+        return None
+    today = timezone.now().date()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+def _students_metric_qs(org, metric: str, start_dt, end_dt):
+    # Base queryset with useful relations for table rendering
+    students = (
+        Student.objects
+        .filter(organization=org)
+        .select_related("classroom", "primary_guardian")
+    )
+
+    # “In-window” screenings subqueries (to mirror the dashboard period filter)
+    window_screenings = Screening.objects.filter(organization=org, student=OuterRef("pk"))
+    window_red = window_screenings.filter(risk_level=Screening.RiskLevel.RED)
+    if start_dt:  # when period != 'all'
+        window_screenings = window_screenings.filter(screened_at__range=(start_dt, end_dt))
+        window_red = window_red.filter(screened_at__range=(start_dt, end_dt))
+
+    # For “Total students” (all-time indicators)
+    ever_screened = Screening.objects.filter(organization=org, student=OuterRef("pk"))
+    ever_red = ever_screened.filter(risk_level=Screening.RiskLevel.RED)
+
+    students = students.annotate(
+        screened_in_window=Exists(window_screenings),
+        red_in_window=Exists(window_red),
+        ever_screened=Exists(ever_screened),
+        ever_red=Exists(ever_red),
+    )
+
+    m = (metric or "").lower()
+    if m in ("screened", "total_screened"):
+        students = students.filter(screened_in_window=True)
+        title = "Total screened"
+    elif m in ("redflag", "red_flagged", "total_redflagged"):
+        students = students.filter(red_in_window=True)
+        title = "Total red‑flagged"
+    elif m in ("boys_screened", "boys-screened"):
+        students = students.filter(gender="M", screened_in_window=True)
+        title = "Total boys screened"
+    elif m in ("boys_redflag", "boys-redflagged"):
+        students = students.filter(gender="M", red_in_window=True)
+        title = "Total boys red‑flagged"
+    elif m in ("girls_screened", "girls-screened"):
+        students = students.filter(gender="F", screened_in_window=True)
+        title = "Total girls screened"
+    elif m in ("girls_redflag", "girls-redflagged"):
+        students = students.filter(gender="F", red_in_window=True)
+        title = "Total girls red‑flagged"
+    else:
+        title = "Total students"  # ignores the period filter, like your tile
+
+    students = students.order_by("classroom__grade", "classroom__division",
+                                 "first_name", "last_name")
+    return title, students
+
+@require_roles(Role.ORG_ADMIN, allow_superuser=True)
+def metric_students(request, metric: str):
+    org = request.org
+    if not org:
+        return HttpResponseForbidden("Organization context required.")
+
+    period = request.GET.get("period", "3m")
+    start_dt, end_dt = _period_bounds(period)
+
+    title, qs = _students_metric_qs(org, metric, start_dt, end_dt)
+
+    rows = []
+    for s in qs.iterator():
+        # For “Total students” show all-time indicators; otherwise, period-windowed
+        screened_flag = bool(s.ever_screened) if title == "Total students" else bool(s.screened_in_window)
+        red_flag = bool(s.ever_red) if title == "Total students" else bool(s.red_in_window)
+
+        class_div = "-"
+        if s.classroom:
+            class_div = s.classroom.grade if s.classroom.division == "" else f"{s.classroom.grade} {s.classroom.division}"
+        phone = getattr(getattr(s, "primary_guardian", None), "phone_e164", None)
+
+        rows.append({
+            "name": getattr(s, "full_name", f"{s.first_name} {s.last_name}".strip()),
+            "class_div": class_div,
+            "age": _age_years(getattr(s, "dob", None)),
+            "phone": phone or "-",
+            "screened": "Yes" if screened_flag else "No",
+            "redflag": "Yes" if red_flag else "No",
+        })
+
+    paginator = Paginator(rows, 50)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(request, "assist/metric_students_list.html", {
+        "org": org,
+        "title": title,
+        "period": period,
+        "page_obj": page_obj,
+        "total": paginator.count,
+    })
+
+@require_roles(Role.ORG_ADMIN, allow_superuser=True)
+def metric_applications(request, status: str):
+    org = request.org
+    if not org:
+        return HttpResponseForbidden("Organization context required.")
+
+    period = request.GET.get("period", "3m")
+    start_dt, end_dt = _period_bounds(period)
+
+    status_key = (status or "").lower()
+    if status_key in ("pending", "forwarded"):
+        title = "Applications pending"
+        base = Application.objects.filter(organization=org, status=Application.Status.FORWARDED)
+    elif status_key in ("approved",):
+        title = "Applications approved"
+        base = Application.objects.filter(organization=org, status=Application.Status.APPROVED)
+    else:
+        return HttpResponseBadRequest("Unknown applications metric.")
+
+    # Keep the cohort consistent with the dashboard tiles (windowed by forwarded_at)
+    if start_dt:
+        base = base.filter(forwarded_at__range=(start_dt, end_dt))
+
+    # Pull “approved_at” from BatchItem.created_at (one per approved app)
+    approved_subq = (
+        BatchItem.objects
+        .filter(application=OuterRef("pk"), outcome=BatchItem.Outcome.APPROVED)
+        .order_by("-created_at").values("created_at")[:1]
+    )
+
+    apps = (
+        base.select_related("student__classroom", "student__primary_guardian")
+            .annotate(approved_at=Subquery(approved_subq, output_field=DateTimeField()))
+            .order_by("-applied_at")
+    )
+
+    rows = []
+    for a in apps.iterator():
+        s = a.student
+        class_div = "-"
+        if s.classroom:
+            class_div = s.classroom.grade if s.classroom.division == "" else f"{s.classroom.grade} {s.classroom.division}"
+        phone = getattr(getattr(s, "primary_guardian", None), "phone_e164", None)
+
+        rows.append({
+            "name": getattr(s, "full_name", f"{s.first_name} {s.last_name}".strip()),
+            "class_div": class_div,
+            "age": _age_years(getattr(s, "dob", None)),
+            "phone": phone or "-",
+            "applied_at": a.applied_at,
+            "forwarded_at": a.forwarded_at,
+            "status": "Approved" if a.status == Application.Status.APPROVED else "Pending",
+            "approved_at": a.approved_at or "Pending",
+        })
+
+    paginator = Paginator(rows, 50)
+    page_obj = paginator.get_page(request.GET.get("page"))
+
+    return render(request, "assist/metric_applications_list.html", {
+        "org": org,
+        "title": title,
+        "period": period,
+        "page_obj": page_obj,
+        "total": paginator.count,
+    })
 
 # ---------- Public parent application (consent) ----------
 def assist_apply(request):

@@ -21,4 +21,6 @@ urlpatterns = [
     path("assist/sapa/approve-top-n", sapa_approve_top_n, name="sapa_approve_top_n"),
     path("assist/sapa/reject-all", sapa_reject_all, name="sapa_reject_all"),
     path("assist/admin/applications", views.school_applications, name="assist_applications"),
+    path("assist/admin/metrics/students/<slug:metric>", views.metric_students, name="metric_students"),
+    path("assist/admin/metrics/applications/<slug:status>", views.metric_applications, name="metric_applications"),
 ]
